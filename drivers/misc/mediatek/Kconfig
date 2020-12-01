@@ -340,6 +340,16 @@ config MTK_LOWMEM_HINT
 	  userspace can use the hint to make memory health
 	  improvement immediately.
 
+config MTK_TASK_TURBO
+	bool "MTK task turbo feature"
+	help
+	  A new option CONFIG_MTK_TASK_TURBO for the feature.
+	  Task turbo provide enhancement of APP launch and lock
+	  latency via Preempting lock waiting queue and more
+	  oppotunity to occupy CPU resource.
+	  If you are not sure about whether to enable it or not,
+	  please set n.
+
 config MTK_SKB_OWNER
 	bool "MTK network performance index support"
 	depends on MTK_PERF_TRACKER
