@@ -3344,7 +3344,7 @@ defined(CONFIG_MTK_CAM_SECURITY_SUPPORT)
 		/* enable_pe_plus; */
 		enable_pd20_reset;
 		power_path_support;
-		max_charger_voltage = <6500000>;
+		max_charger_voltage = <9000000>;
 		fast_charge_voltage = <3000000>;
 
 		/* charging current */
@@ -3370,6 +3370,10 @@ defined(CONFIG_MTK_CAM_SECURITY_SUPPORT)
 		/* enable_pe_2; */
 		/* enable_pe_3; */
 		/* enable_pe_4; */
+		enable_pe_2;
+		enable_pe_3;
+		enable_pe_4;
+
 		enable_type_c;
 		power_path_support;
 		enable_dynamic_mivr;
@@ -3377,8 +3381,8 @@ defined(CONFIG_MTK_CAM_SECURITY_SUPPORT)
 
 		/* common */
 		battery_cv = <4350000>;
-		max_charger_voltage = <6500000>;
-		min_charger_voltage = <4600000>;
+		max_charger_voltage = <9000000>;
+		min_charger_voltage = <5000000>;
 
 		/* dynamic mivr */
 		min_charger_voltage_1 = <4400000>;
@@ -3390,7 +3394,7 @@ defined(CONFIG_MTK_CAM_SECURITY_SUPPORT)
 		usb_charger_current_unconfigured = <70000>;
 		usb_charger_current_configured = <500000>;
 		usb_charger_current = <500000>;
-		ac_charger_current = <2050000>;
+		ac_charger_current = <3000000>;
 		ac_charger_input_current = <3200000>;
 		non_std_ac_charger_current = <500000>;
 		charging_host_charger_current = <1500000>;
@@ -3451,7 +3455,7 @@ defined(CONFIG_MTK_CAM_SECURITY_SUPPORT)
 		pe40_dual_charger_input_current = <3000000>;
 		pe40_dual_charger_chg1_current = <2000000>;
 		pe40_dual_charger_chg2_current = <2000000>;
-		pe40_stop_battery_soc = <80>;
+		pe40_stop_battery_soc = <85>;
 
 		/* PE 4.0 cable impedance (mohm) */
 		pe40_r_cable_1a_lower = <518>;
