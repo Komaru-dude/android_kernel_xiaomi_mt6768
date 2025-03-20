@@ -3366,6 +3366,7 @@ defined(CONFIG_MTK_CAM_SECURITY_SUPPORT)
 		enable_pe_plus;
 		enable_pd20_reset;
 		power_path_support;
+		enable_pe_2 = <1>; 
 		max_charger_voltage = <15000000>;
 		fast_charge_voltage = <3000000>;
 

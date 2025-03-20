@@ -3349,10 +3349,10 @@ defined(CONFIG_MTK_CAM_SECURITY_SUPPORT)
 
 		/* charging current */
 		usb_charger_current = <500000>;
-		ac_charger_current = <2050000>;
+		ac_charger_current = <3000000>;
 		ac_charger_input_current = <3200000>;
 		non_std_ac_charger_current = <500000>;
-		charging_host_charger_current = <1500000>;
+		charging_host_charger_current = <3000000>;
 		ta_ac_charger_current = <3000000>;
 		pd_charger_current = <500000>;
 
@@ -3431,13 +3431,14 @@ defined(CONFIG_MTK_CAM_SECURITY_SUPPORT)
 		/* PE */
 		ta_12v_support;
 		ta_9v_support;
+		ta_7v_support;
 		pe_ichg_level_threshold = <1000000>; /* uA */
 		ta_ac_12v_input_current = <3200000>;
-		ta_ac_9v_input_current = <3200000>;
+		ta_ac_9v_input_current = <2000000>;
 		ta_ac_7v_input_current = <3200000>;
 
 		/* PE 2.0 */
-		pe20_ichg_level_threshold = <1000000>; /* uA */
+		pe20_ichg_level_threshold = <2000000>; /* uA */
 		ta_start_battery_soc = <0>;
 		ta_stop_battery_soc = <85>;
 

@@ -413,7 +413,7 @@
 	battery_cv = <4460000>;
 	usb_charger_current_suspend = <0>;
 	usb_charger_current_unconfigured = <70000>;
-	usb_charger_current_configured = <500000>;
+	usb_charger_current_configured = <2500000>;
 	usb_charger_current = <3000000>;
 	ac_charger_current = <3000000>;
 	ac_charger_input_current = <3050000>;

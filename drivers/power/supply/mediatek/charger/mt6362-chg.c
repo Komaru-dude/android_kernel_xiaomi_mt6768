@@ -240,7 +240,7 @@ struct mt6362_chg_platform_data {
 };
 
 static const struct mt6362_chg_platform_data def_platform_data = {
-	.ichg = 2000000,		/* uA */
+	.ichg = 3000000,		/* uA */
 	.aicr = 500000,			/* uA */
 	.mivr = 4400000,		/* uV */
 	.cv = 4350000,			/* uA */
