@@ -130,3 +130,5 @@ gcc-32
 gcc-64
 out
 AnyKernel3
+KernelSU-Next
+drivers/kernelsu
