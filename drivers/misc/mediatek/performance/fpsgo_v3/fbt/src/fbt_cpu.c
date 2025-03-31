@@ -214,7 +214,17 @@ static int set_isolation;
 static int cluster_num;
 static unsigned int cpu_max_freq;
 static struct fbt_cpu_dvfs_info *cpu_dvfs;
+static int max_cap_cluster, min_cap_cluster;
 static unsigned int def_capacity_margin;
+
+/* set when init */
+static int limit_cluster;
+static int limit_opp; /* for ceiling limit */
+static int limit_cpu; /* for core limit */
+
+/* set dynamically when policy changes*/
+static int limit_policy;
+static int limit_cap;
 
 static int *clus_max_cap;
 
@@ -510,23 +520,6 @@ static void fbt_find_ex_max_blc(int pid, unsigned long long buffer_id,
 	mutex_unlock(&blc_mlock);
 }
 
-static int fbt_find_freerun(void)
-{
-	struct fbt_thread_blc *pos, *next;
-	int freerun = 0;
-
-	mutex_lock(&blc_mlock);
-	list_for_each_entry_safe(pos, next, &blc_list, entry) {
-		if (pos->freerun) {
-			freerun = 1;
-			break;
-		}
-	}
-	mutex_unlock(&blc_mlock);
-
-	return freerun;
-}
-
 static void fbt_set_cap_margin_locked(int set)
 {
 	if (!fbt_cap_margin_enable)
@@ -536,7 +529,7 @@ static void fbt_set_cap_margin_locked(int set)
 		return;
 
 	fpsgo_main_trace("fpsgo set margin %d", set?1024:def_capacity_margin);
-	fpsgo_systrace_c_fbt_gm(-100, set?1024:def_capacity_margin,
+	fpsgo_systrace_c_fbt_gm(-100, 0, set?1024:def_capacity_margin,
 					"cap_margin");
 
 	if (set)
@@ -544,32 +537,6 @@ static void fbt_set_cap_margin_locked(int set)
 	else
 		set_capacity_margin(def_capacity_margin);
 	set_cap_margin = set;
-}
-
-static void fbt_free_bhr(void)
-{
-	struct ppm_limit_data *pld;
-	int i;
-
-	pld =
-		kcalloc(cluster_num, sizeof(struct ppm_limit_data),
-				GFP_KERNEL);
-	if (!pld) {
-		FPSGO_LOGE("ERROR OOM %d\n", __LINE__);
-		return;
-	}
-
-	for (i = 0; i < cluster_num; i++) {
-		pld[i].max = -1;
-		pld[i].min = -1;
-	}
-
-	xgf_trace("fpsgo free bhr");
-
-	update_userlimit_cpu_freq(CPU_KIR_FPSGO, cluster_num, pld);
-	kfree(pld);
-
-	fbt_set_cap_margin_locked(0);
 }
 
 static void fbt_set_idleprefer_locked(int enable)
@@ -1512,10 +1479,9 @@ static void fbt_do_jerk(struct work_struct *work)
 			fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id,
 					pld[cluster].max,
 					"cluster%d ceiling_freq", cluster);
-				}
-				fbt_set_cap_margin_locked(0);
-			} else
-				jerk->postpone = 1;
+		}
+	} else
+		jerk->postpone = 1;
 leave:
 	kfree(pld);
 
@@ -1864,14 +1830,9 @@ static void fbt_do_boost(unsigned int blc_wt, int pid,
 		fbt_set_boost_value(blc_wt);
 
 	update_userlimit_cpu_freq(CPU_KIR_FPSGO, cluster_num, pld);
-
-	if (blc_wt < cpu_dvfs[fbt_get_L_cluster_num()].capacity_ratio[0]
-		&& pld[fbt_get_L_cluster_num()].max != -1
-		&& pld[fbt_get_L_cluster_num()].max
-			< cpu_dvfs[fbt_get_L_cluster_num()].power[0])
-		fbt_set_cap_margin_locked(1);
-	else
-		fbt_set_cap_margin_locked(0);
+	for (cluster = 0; cluster < cluster_num; cluster++)
+		fpsgo_systrace_c_fbt(pid, buffer_id, pld[cluster].max,
+				"cluster%d ceiling_freq", cluster);
 
 	kfree(pld);
 	kfree(clus_opp);
@@ -2930,18 +2891,14 @@ void fpsgo_base2fbt_no_one_render(void)
 	max_blc_pid = 0;
 	max_blc_buffer_id = 0;
 	memset(base_opp, 0, cluster_num * sizeof(unsigned int));
-	fpsgo_systrace_c_fbt_gm(-100, max_blc, "max_blc");
-	fpsgo_systrace_c_fbt_gm(-100, max_blc_pid, "max_blc_pid");
+	fpsgo_systrace_c_fbt_gm(-100, 0, max_blc, "max_blc");
+	fpsgo_systrace_c_fbt_gm(-100, 0, max_blc_pid, "max_blc_pid");
+	fpsgo_systrace_c_fbt_gm(-100, 0, max_blc_buffer_id,
+		"max_blc_buffer_id");
 
-	fbt_set_idleprefer_locked(0);
-	fbt_set_down_throttle_locked(-1);
-	fbt_set_sync_flag_locked(-1);
-	fbt_set_cap_margin_locked(0);
-	fbt_free_bhr();
-	fbt_filter_ppm_log_locked(0);
-	if (boost_ta)
-		fbt_clear_boost_value();
-	else
+	fbt_setting_reset(1);
+
+	if (!boost_ta)
 		clear_uclamp = 1;
 
 	mutex_unlock(&fbt_mlock);
@@ -2963,11 +2920,7 @@ void fpsgo_base2fbt_only_bypass(void)
 
 	xgf_trace("fpsgo only_bypass");
 
-	fbt_free_bhr();
-	fbt_filter_ppm_log_locked(0);
-	fbt_set_down_throttle_locked(-1);
-	fbt_set_sync_flag_locked(-1);
-	fbt_set_cap_margin_locked(0);
+	fbt_setting_reset(0);
 
 	if (!boost_ta)
 		clear_uclamp = 1;
@@ -3151,17 +3104,9 @@ static void fbt_setting_exit(void)
 	memset(base_opp, 0, cluster_num * sizeof(unsigned int));
 	max_blc = 0;
 	max_blc_pid = 0;
+	max_blc_buffer_id = 0;
 
-	fbt_set_walt_locked(0);
-	fbt_set_idleprefer_locked(0);
-	fbt_set_down_throttle_locked(-1);
-	fbt_set_sync_flag_locked(-1);
-	fbt_set_cap_margin_locked(0);
-	fbt_free_bhr();
-	if (boost_ta)
-		fbt_clear_boost_value();
-	if (ultra_rescue)
-		fbt_boost_dram(0);
+	fbt_setting_reset(1);
 }
 
 int fpsgo_ctrl2fbt_switch_fbt(int enable)
@@ -3500,158 +3445,21 @@ static ssize_t enable_switch_down_throttle_store(struct kobject *kobj,
 		struct kobj_attribute *attr,
 		const char *buf, size_t count)
 {
-	int val;
-	int ret;
+	int val = -1;
+	char acBuffer[FPSGO_SYSFS_MAX_BUFF_SIZE];
+	int arg;
 
-	ret = kstrtoint_from_user(ubuf, cnt, 0, &val);
-	if (ret)
-		return ret;
-
-	fbt_switch_idleprefer(val);
-
-	return cnt;
-}
-
-FBT_DEBUGFS_ENTRY(switch_idleprefer);
-
-static int fbt_thread_info_show(struct seq_file *m, void *unused)
-{
-	struct fbt_thread_blc *pos, *next;
-
-	mutex_lock(&fbt_mlock);
-	SEQ_printf(m,
-		"enable\tbypass\twalt\tidleprefer\tmax_blc\tmax_pid\tdfps\tvsync\n");
-	SEQ_printf(m, "%d\t%d\t%d\t%d\t\t%d\t%d\t%d\t%llu\n\n",
-		fbt_enable, bypass_flag, walt_enable, set_idleprefer,
-		max_blc, max_blc_pid, _gdfrc_fps_limit, vsync_time);
-	mutex_unlock(&fbt_mlock);
-
-	SEQ_printf(m, "pid\tperfidx\t\n");
-	mutex_lock(&blc_mlock);
-	list_for_each_entry_safe(pos, next, &blc_list, entry)
-		SEQ_printf(m, "%d\t%d\n", pos->pid, pos->blc);
-	mutex_unlock(&blc_mlock);
-
-	return 0;
-}
-
-static ssize_t fbt_thread_info_write(struct file *flip,
-			const char *ubuf, size_t cnt, loff_t *data)
-{
-	return 0;
-}
-
-FBT_DEBUGFS_ENTRY(thread_info);
-
-static int fbt_table_show(struct seq_file *m, void *unused)
-{
-	int cluster, opp;
-
-	mutex_lock(&fbt_mlock);
-	SEQ_printf(m,
-		"#cluster\tmax_cap_cluster\n");
-	SEQ_printf(m, "%d\t\t%d\n\n",
-		cluster_num, max_cap_cluster);
-
-	for (cluster = 0; cluster < cluster_num ; cluster++) {
-		for (opp = 0; opp < NR_FREQ_CPU; opp++) {
-			SEQ_printf(m, "[%d][%d] freq %d, cap %d\n",
-				cluster, opp,
-				cpu_dvfs[cluster].power[opp],
-				cpu_dvfs[cluster].capacity_ratio[opp]);
+	if ((count > 0) && (count < FPSGO_SYSFS_MAX_BUFF_SIZE)) {
+		if (scnprintf(acBuffer, FPSGO_SYSFS_MAX_BUFF_SIZE, "%s", buf)) {
+			if (kstrtoint(acBuffer, 0, &arg) == 0)
+				val = arg;
+			else
+				return count;
 		}
 	}
 
-	mutex_unlock(&fbt_mlock);
-
-	return 0;
-}
-
-static ssize_t fbt_table_write(struct file *flip,
-			const char *ubuf, size_t cnt, loff_t *data)
-{
-	return 0;
-}
-
-FBT_DEBUGFS_ENTRY(table);
-
-static int fbt_enable_uclamp_boost_show(struct seq_file *m, void *unused)
-{
 	mutex_lock(&fbt_mlock);
-	seq_printf(m, "%s uclamp boost\n",
-		uclamp_boost_enable?"enable":"disable");
-	mutex_unlock(&fbt_mlock);
 
-	return 0;
-}
-
-static ssize_t fbt_enable_uclamp_boost_write(struct file *flip,
-			const char *ubuf, size_t cnt, loff_t *data)
-{
-	int val;
-	int ret;
-
-	ret = kstrtoint_from_user(ubuf, cnt, 0, &val);
-	if (ret)
-		return ret;
-
-	fbt_switch_uclamp_onoff(val);
-
-	return count;
-}
-
-FBT_DEBUGFS_ENTRY(enable_uclamp_boost);
-
-static int fbt_boost_ta_show(struct seq_file *m, void *unused)
-{
-	mutex_lock(&fbt_mlock);
-	SEQ_printf(m, "%d\n", boost_ta);
-	mutex_unlock(&fbt_mlock);
-
-	return 0;
-}
-
-static ssize_t fbt_boost_ta_write(struct file *flip,
-			const char *ubuf, size_t cnt, loff_t *data)
-{
-	int val;
-	int ret;
-
-	ret = kstrtoint_from_user(ubuf, cnt, 0, &val);
-	if (ret)
-		return ret;
-
-	fbt_switch_to_ta(val);
-
-	return cnt;
-}
-
-FBT_DEBUGFS_ENTRY(boost_ta);
-
-static int fbt_switch_down_throttle_show(struct seq_file *m, void *unused)
-{
-	int val = -1;
-
-	mutex_lock(&fbt_mlock);
-	SEQ_printf(m, "fbt_down_throttle_enable %d\n",
-				fbt_down_throttle_enable);
-	SEQ_printf(m, "down_throttle_ns %d\n", down_throttle_ns);
-	mutex_unlock(&fbt_mlock);
-
-	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
-}
-
-static ssize_t fbt_switch_down_throttle_write(struct file *flip,
-			const char *ubuf, size_t cnt, loff_t *data)
-{
-	int val;
-	int ret;
-
-	ret = kstrtoint_from_user(ubuf, cnt, 0, &val);
-	if (ret)
-		return ret;
-
-	mutex_lock(&fbt_mlock);
 	if (!fbt_enable) {
 		mutex_unlock(&fbt_mlock);
 		return count;
@@ -3664,36 +3472,57 @@ static ssize_t fbt_switch_down_throttle_write(struct file *flip,
 
 	mutex_unlock(&fbt_mlock);
 
-	return cnt;
+	return count;
 }
 
-FBT_DEBUGFS_ENTRY(switch_down_throttle);
+static KOBJ_ATTR_RW(enable_switch_down_throttle);
 
-static int fbt_switch_sync_flag_show(struct seq_file *m, void *unused)
+static ssize_t enable_switch_sync_flag_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
 {
+	char temp[FPSGO_SYSFS_MAX_BUFF_SIZE] = "";
+	int posi = 0;
+	int length;
+
 	mutex_lock(&fbt_mlock);
-	SEQ_printf(m, "fbt_sync_flag_enable %d\n", fbt_sync_flag_enable);
-	SEQ_printf(m, "sync_flag %d\n", sync_flag);
+	length = scnprintf(temp + posi,
+		FPSGO_SYSFS_MAX_BUFF_SIZE - posi,
+		"fbt_sync_flag_enable %d\n", fbt_sync_flag_enable);
+	posi += length;
+
+	length = scnprintf(temp + posi,
+		FPSGO_SYSFS_MAX_BUFF_SIZE - posi,
+		"sync_flag %d\n", sync_flag);
+	posi += length;
 	mutex_unlock(&fbt_mlock);
 
-	return 0;
+	return scnprintf(buf, PAGE_SIZE, "%s", temp);
 }
 
-static ssize_t fbt_switch_sync_flag_write(struct file *flip,
-			const char *ubuf, size_t cnt, loff_t *data)
+static ssize_t enable_switch_sync_flag_store(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		const char *buf, size_t count)
 {
-	int val;
-	int ret;
+	int val = -1;
+	char acBuffer[FPSGO_SYSFS_MAX_BUFF_SIZE];
+	int arg;
 
-	ret = kstrtoint_from_user(ubuf, cnt, 0, &val);
-	if (ret)
-		return ret;
+	if ((count > 0) && (count < FPSGO_SYSFS_MAX_BUFF_SIZE)) {
+		if (scnprintf(acBuffer, FPSGO_SYSFS_MAX_BUFF_SIZE, "%s", buf)) {
+			if (kstrtoint(acBuffer, 0, &arg) == 0)
+				val = arg;
+			else
+				return count;
+		}
+	}
+
 
 	mutex_lock(&fbt_mlock);
 
 	if (!fbt_enable) {
 		mutex_unlock(&fbt_mlock);
-		return cnt;
+		return count;
 	}
 
 	if (!val && sync_flag != -1)
@@ -3702,37 +3531,62 @@ static ssize_t fbt_switch_sync_flag_write(struct file *flip,
 
 	mutex_unlock(&fbt_mlock);
 
-	return cnt;
+	return count;
 }
 
-FBT_DEBUGFS_ENTRY(switch_sync_flag);
+static KOBJ_ATTR_RW(enable_switch_sync_flag);
 
-static int fbt_switch_cap_margin_show(struct seq_file *m, void *unused)
+static ssize_t enable_switch_cap_margin_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
 {
+	char temp[FPSGO_SYSFS_MAX_BUFF_SIZE] = "";
+	int posi = 0;
+	int length;
+
 	mutex_lock(&fbt_mlock);
-	SEQ_printf(m, "fbt_cap_margin_enable %d\n", fbt_cap_margin_enable);
-	SEQ_printf(m, "set_cap_margin %d\n", set_cap_margin);
-	SEQ_printf(m, "get_cap_margin %d\n", get_capacity_margin());
+
+	length = scnprintf(temp + posi,
+		FPSGO_SYSFS_MAX_BUFF_SIZE - posi,
+		"fbt_cap_margin_enable %d\n", fbt_cap_margin_enable);
+	posi += length;
+
+	length = scnprintf(temp + posi,
+		FPSGO_SYSFS_MAX_BUFF_SIZE - posi,
+		"set_cap_margin %d\n", set_cap_margin);
+	posi += length;
+
+	length = scnprintf(temp + posi,
+		FPSGO_SYSFS_MAX_BUFF_SIZE - posi,
+		"get_cap_margin %d\n", get_capacity_margin());
+	posi += length;
 	mutex_unlock(&fbt_mlock);
 
-	return 0;
+	return scnprintf(buf, PAGE_SIZE, "%s", temp);
 }
 
-static ssize_t fbt_switch_cap_margin_write(struct file *flip,
-			const char *ubuf, size_t cnt, loff_t *data)
+static ssize_t enable_switch_cap_margin_store(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		const char *buf, size_t count)
 {
-	int val;
-	int ret;
+	int val = -1;
+	char acBuffer[FPSGO_SYSFS_MAX_BUFF_SIZE];
+	int arg;
 
-	ret = kstrtoint_from_user(ubuf, cnt, 0, &val);
-	if (ret)
-		return ret;
+	if ((count > 0) && (count < FPSGO_SYSFS_MAX_BUFF_SIZE)) {
+		if (scnprintf(acBuffer, FPSGO_SYSFS_MAX_BUFF_SIZE, "%s", buf)) {
+			if (kstrtoint(acBuffer, 0, &arg) == 0)
+				val = arg;
+			else
+				return count;
+		}
+	}
 
 	mutex_lock(&fbt_mlock);
 
 	if (!fbt_enable) {
 		mutex_unlock(&fbt_mlock);
-		return cnt;
+		return count;
 	}
 
 	if (!val && set_cap_margin != 0)
@@ -3741,12 +3595,119 @@ static ssize_t fbt_switch_cap_margin_write(struct file *flip,
 
 	mutex_unlock(&fbt_mlock);
 
-	return cnt;
+	return count;
 }
 
-FBT_DEBUGFS_ENTRY(switch_cap_margin);
+static KOBJ_ATTR_RW(enable_switch_cap_margin);
 
-static int fbt_ultra_rescue_show(struct seq_file *m, void *unused)
+static ssize_t ultra_rescue_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
+{
+	int val = -1;
+
+	mutex_lock(&fbt_mlock);
+	val = ultra_rescue;
+	mutex_unlock(&fbt_mlock);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
+}
+
+static ssize_t ultra_rescue_store(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		const char *buf, size_t count)
+{
+	int val = -1;
+	char acBuffer[FPSGO_SYSFS_MAX_BUFF_SIZE];
+	int arg;
+
+	if ((count > 0) && (count < FPSGO_SYSFS_MAX_BUFF_SIZE)) {
+		if (scnprintf(acBuffer, FPSGO_SYSFS_MAX_BUFF_SIZE, "%s", buf)) {
+			if (kstrtoint(acBuffer, 0, &arg) == 0)
+				val = arg;
+			else
+				return count;
+		}
+	}
+
+	mutex_lock(&fbt_mlock);
+
+	if (!fbt_enable) {
+		mutex_unlock(&fbt_mlock);
+		return count;
+	}
+
+	fbt_set_ultra_rescue_locked(val);
+
+	mutex_unlock(&fbt_mlock);
+
+	return count;
+}
+
+static KOBJ_ATTR_RW(ultra_rescue);
+
+static ssize_t llf_task_policy_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
+{
+	int val = -1;
+
+	mutex_lock(&fbt_mlock);
+	val = llf_task_policy;
+	mutex_unlock(&fbt_mlock);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
+}
+
+static ssize_t llf_task_policy_store(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		const char *buf, size_t count)
+{
+	int val = 0;
+	int orig_policy;
+	char acBuffer[FPSGO_SYSFS_MAX_BUFF_SIZE];
+	int arg;
+
+	if ((count > 0) && (count < FPSGO_SYSFS_MAX_BUFF_SIZE)) {
+		if (scnprintf(acBuffer, FPSGO_SYSFS_MAX_BUFF_SIZE, "%s", buf)) {
+			if (kstrtoint(acBuffer, 0, &arg) == 0)
+				val = arg;
+			else
+				return count;
+		}
+	}
+
+	mutex_lock(&fbt_mlock);
+	if (!fbt_enable) {
+		mutex_unlock(&fbt_mlock);
+		return count;
+	}
+
+	if (val < FPSGO_TPOLICY_NONE || val >= FPSGO_TPOLICY_MAX) {
+		mutex_unlock(&fbt_mlock);
+		return count;
+	}
+
+	if (llf_task_policy == val) {
+		mutex_unlock(&fbt_mlock);
+		return count;
+	}
+
+	orig_policy = llf_task_policy;
+	llf_task_policy = val;
+	xgf_trace("fpsgo set llf_task_policy %d", llf_task_policy);
+	mutex_unlock(&fbt_mlock);
+
+	fpsgo_clear_llf_cpu_policy(orig_policy);
+
+	return count;
+}
+
+static KOBJ_ATTR_RW(llf_task_policy);
+
+static ssize_t limit_policy_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
 {
 	int val = -1;
 
@@ -3922,66 +3883,31 @@ int __init fbt_cpu_init(void)
 
 	fbt_update_pwd_tbl();
 
-	if (fpsgo_debugfs_dir) {
-		fbt_debugfs_dir = debugfs_create_dir("fbt", fpsgo_debugfs_dir);
-		if (fbt_debugfs_dir) {
-			debugfs_create_file("light_loading_policy",
-					0664,
-					fbt_debugfs_dir,
-					NULL,
-					&fbt_llf_policy_fops);
-			debugfs_create_file("fbt_info",
-					0664,
-					fbt_debugfs_dir,
-					NULL,
-					&fbt_thread_info_fops);
-			debugfs_create_file("switch_idleprefer",
-					0664,
-					fbt_debugfs_dir,
-					NULL,
-					&fbt_switch_idleprefer_fops);
-			debugfs_create_file("enable_fteh",
-					0664,
-					fbt_debugfs_dir,
-					NULL,
-					&fbt_enable_fteh_fops);
-			debugfs_create_file("table",
-					0664,
-					fbt_debugfs_dir,
-					NULL,
-					&fbt_table_fops);
-			debugfs_create_file("enable_uclamp_boost",
-					0664,
-					fbt_debugfs_dir,
-					NULL,
-					&fbt_enable_uclamp_boost_fops);
-			debugfs_create_file("boost_ta",
-					0664,
-					fbt_debugfs_dir,
-					NULL,
-					&fbt_boost_ta_fops);
-			debugfs_create_file("enable_switch_down_throttle",
-					0664,
-					fbt_debugfs_dir,
-					NULL,
-					&fbt_switch_down_throttle_fops);
-			debugfs_create_file("enable_switch_sync_flag",
-					0664,
-					fbt_debugfs_dir,
-					NULL,
-					&fbt_switch_sync_flag_fops);
-			debugfs_create_file("enable_switch_cap_margin",
-					0664,
-					fbt_debugfs_dir,
-					NULL,
-					&fbt_switch_cap_margin_fops);
-			debugfs_create_file("ultra_rescue",
-					0664,
-					fbt_debugfs_dir,
-					NULL,
-					&fbt_ultra_rescue_fops);
-		}
+	if (!fpsgo_sysfs_create_dir(NULL, "fbt", &fbt_kobj)) {
+		fpsgo_sysfs_create_file(fbt_kobj,
+				&kobj_attr_light_loading_policy);
+		fpsgo_sysfs_create_file(fbt_kobj,
+				&kobj_attr_fbt_info);
+		fpsgo_sysfs_create_file(fbt_kobj,
+				&kobj_attr_switch_idleprefer);
+		fpsgo_sysfs_create_file(fbt_kobj,
+				&kobj_attr_table);
+		fpsgo_sysfs_create_file(fbt_kobj,
+				&kobj_attr_enable_switch_down_throttle);
+		fpsgo_sysfs_create_file(fbt_kobj,
+				&kobj_attr_enable_switch_sync_flag);
+		fpsgo_sysfs_create_file(fbt_kobj,
+				&kobj_attr_enable_switch_cap_margin);
+		fpsgo_sysfs_create_file(fbt_kobj,
+				&kobj_attr_ultra_rescue);
+		fpsgo_sysfs_create_file(fbt_kobj,
+				&kobj_attr_llf_task_policy);
+		fpsgo_sysfs_create_file(fbt_kobj,
+				&kobj_attr_boost_ta);
+		fpsgo_sysfs_create_file(fbt_kobj,
+				&kobj_attr_limit_policy);
 	}
+
 
 	INIT_LIST_HEAD(&loading_list);
 	INIT_LIST_HEAD(&blc_list);

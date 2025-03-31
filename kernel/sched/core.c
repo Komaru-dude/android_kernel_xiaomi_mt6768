@@ -52,20 +52,9 @@
 #if defined(CONFIG_MTK_GIC_V3_EXT)
 #include <linux/irqchip/mtk-gic-extend.h>
 #endif
+#include <mt-plat/l3cc_common.h>
 #ifdef CONFIG_MTK_TASK_TURBO
 #include <mt-plat/turbo_common.h>
-#endif
-
-#ifdef CONFIG_MTK_SCHED_MONITOR
-#include "mtk_sched_mon.h"
-enum ipi_msg_type {
-	IPI_RESCHEDULE,
-	IPI_CALL_FUNC,
-	IPI_CALL_FUNC_SINGLE,
-	IPI_CPU_STOP,
-	IPI_TIMER,
-	IPI_IRQ_WORK,
-};
 #endif
 #ifdef CONFIG_MEDIATEK_SOLUTION
 #include "mtk_secure_api.h"
@@ -3657,7 +3646,6 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	if (unlikely(is_turbo_task(current)))
 		set_user_nice(p, current->nice_backup);
 #endif
-
 	/*
 	 * Revert to default priority/policy on fork if requested.
 	 */
@@ -5187,6 +5175,7 @@ void set_user_nice(struct task_struct *p, long nice)
 
 	trace_sched_set_user_nice(p, nice, is_turbo_task(p));
 #endif
+
 	/*
 	 * The RT priorities are set via sched_setscheduler(), but we still
 	 * allow the 'normal' nice value to be set - but as expected

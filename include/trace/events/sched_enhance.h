@@ -770,6 +770,24 @@ TRACE_EVENT(sched_big_task_rotation,
 		__entry->fin, __entry->set_uclamp)
 );
 
+TRACE_EVENT(sched_big_task_rotation_reset,
+
+	TP_PROTO(int set_uclamp),
+
+	TP_ARGS(set_uclamp),
+
+	TP_STRUCT__entry(
+		__field(int, set_uclamp)
+	),
+
+	TP_fast_assign(
+		__entry->set_uclamp	= set_uclamp;
+	),
+
+	TP_printk("set_uclamp=%d",
+		__entry->set_uclamp)
+);
+
 #ifdef CONFIG_MTK_TASK_TURBO
 TRACE_EVENT(sched_set_user_nice,
 	TP_PROTO(struct task_struct *task, int prio, int is_turbo),
