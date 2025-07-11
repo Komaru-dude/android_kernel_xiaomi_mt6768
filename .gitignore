@@ -123,3 +123,13 @@ all.config
 
 # fetched Android config fragments
 kernel/configs/android-*.cfg
+
+# KernelSU Next dirs
+KernelSU-Next
+drivers/kernelsu
+
+# Kernel out
+out
+
+# AnyKernel3
+AnyKernel3
